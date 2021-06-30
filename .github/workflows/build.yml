@@ -31,24 +31,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-18.04]
+        os: [ubuntu-18.04, ubuntu-20.04]
         compiler: [gcc]
         build-type: [RelWithDebInfo]
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v2
-    - name: Temporary APT mirrors cleanup
-      run: |
-        set -e
-        sudo rm -f /etc/apt/sources.list.d/dotnetdev.list /etc/apt/sources.list.d/microsoft-prod.list
     - name: Setup extra APT mirror
+      if: startsWith(runner.os, 'Linux')
       run: |
         set -x
         set -e
-        sudo apt-get install -y apt-transport-https lsb-release ca-certificates gnupg
-        sudo apt-key adv --keyserver 'hkp://keyserver.ubuntu.com:80' --recv-key 892EA6EE273707C6495A6FB6220D644C64666806
-        sudo sh -c 'echo "deb https://dl.bintray.com/gergondet/multi-contact-head $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/multi-contact.list'
-        sudo apt update
+        curl -1sLf 'https://dl.cloudsmith.io/public/mc-rtc/head/setup.deb.sh' | sudo -E bash
     - name: Install mc_rtc
       uses: jrl-umi3218/github-actions/install-dependencies@master
       with:
@@ -59,9 +53,16 @@ jobs:
     - name: Install CoppeliaSim
       run: |
         cd /tmp
-        wget https://www.coppeliarobotics.com/files/CoppeliaSim_Edu_V4_1_0_Ubuntu18_04.tar.xz
-        tar xJf CoppeliaSim_Edu_V4_1_0_Ubuntu18_04.tar.xz
-        echo "VREP_PATH=/tmp/CoppeliaSim_Edu_V4_1_0_Ubuntu18_04" >> $GITHUB_ENV
+        if [ "${{ matrix.os }}" = "ubuntu-18.04" ]
+        then
+          wget https://www.coppeliarobotics.com/files/CoppeliaSim_Edu_V4_2_0_Ubuntu18_04.tar.xz
+          tar xJf CoppeliaSim_Edu_V4_2_0_Ubuntu18_04.tar.xz
+          echo "VREP_PATH=/tmp/CoppeliaSim_Edu_V4_2_0_Ubuntu18_04" >> $GITHUB_ENV
+        else
+          wget https://www.coppeliarobotics.com/files/CoppeliaSim_Edu_V4_2_0_Ubuntu20_04.tar.xz
+          tar xJf CoppeliaSim_Edu_V4_2_0_Ubuntu20_04.tar.xz
+          echo "VREP_PATH=/tmp/CoppeliaSim_Edu_V4_2_0_Ubuntu20_04" >> $GITHUB_ENV
+        fi
     - name: Install vrep-api-wrapper
       uses: jrl-umi3218/github-actions/install-dependencies@master
       with:
