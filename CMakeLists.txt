@@ -14,7 +14,7 @@ set(CMAKE_CXX_STANDARD 11)
 project(${PROJECT_NAME} LANGUAGES CXX VERSION 1.0.0)
 
 find_package(vrep-api-wrapper REQUIRED)
-find_package(mc_rtc 1.4.0 REQUIRED)
+find_package(mc_rtc REQUIRED)
 
 add_subdirectory(src)
 
