@@ -14,6 +14,9 @@ set(CMAKE_CXX_STANDARD 11)
 project(${PROJECT_NAME} LANGUAGES CXX VERSION 1.0.0)
 
 find_package(vrep-api-wrapper REQUIRED)
+if(NOT DEFINED VREP_PATH)
+  message(FATAL_ERROR "Looks like vrep-api-wrapper does not define the VREP_PATH variable, please update")
+endif()
 find_package(mc_rtc REQUIRED)
 
 add_subdirectory(src)

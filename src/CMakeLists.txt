@@ -16,3 +16,12 @@ install(TARGETS mc_vrep
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib)
 
+# FIXME If we ever use the stack in CoppeliaSim API we might need the stack stuff?
+add_library(simExtMcRtc SHARED vrep_plugin.cpp "${VREP_PATH}/programming/common/simLib.cpp")
+target_include_directories(simExtMcRtc PUBLIC "${VREP_PATH}/programming/include/" "${VREP_PATH}/programming/common")
+target_link_libraries(simExtMcRtc PUBLIC mc_rtc::mc_control)
+
+install(TARGETS simExtMcRtc
+  RUNTIME DESTINATION "${VREP_PATH}"
+  LIBRARY DESTINATION "${VREP_PATH}"
+  ARCHIVE DESTINATION "${VREP_PATH}")
