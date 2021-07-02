@@ -71,9 +71,9 @@ mc_vrep supports multiple robots, to enable it add the following entry to your `
 ```yaml
 VREP:
   Extras:
-    - index: 1
+    - name: kuka_2
       suffix: "#0"
-    - index: 2
+    - name: kuka_3
       suffix: "#1"
 ```
 

@@ -27,7 +27,7 @@ private:
 
   std::vector<VREPSimulationConfiguration::ExtraRobot> extraRobots;
 
-  std::vector<unsigned int> rIdx;
+  std::vector<std::string> rNames;
   std::vector<std::string> suffixes;
   std::vector<std::string> baseNames;
   std::vector<std::string> joints;
@@ -147,21 +147,17 @@ public:
 #endif
       controller.realRobots().robotCopy(robot, robot.name());
     }
-    rIdx.push_back(0);
+    rNames.push_back(controller.robot().name());
     suffixes.push_back("");
     for(auto & e : extraRobots)
     {
-      rIdx.push_back(e.index);
+      rNames.push_back(e.name);
       suffixes.push_back(e.suffix);
     }
-    for(size_t i = 0; i < rIdx.size(); ++i)
+    for(size_t i = 0; i < rNames.size(); ++i)
     {
       const auto & suffix = suffixes[i];
-#if MC_RTC_VERSION_MAJOR < 2
-      const auto & robot = robots.robot(rIdx[i]);
-#else
-      const auto & robot = *robots.robots()[rIdx[i]];
-#endif
+      const auto & robot = robots.robot(rNames[i]);
       controller.realRobots().robotCopy(robot, robot.name());
       std::string jName = "";
       std::string baseName = jName;
@@ -215,13 +211,9 @@ public:
       vrep.nextSimulationStep();
     }
     controller.running = true;
-    for(size_t i = 0; i < rIdx.size(); ++i)
+    for(size_t i = 0; i < rNames.size(); ++i)
     {
-#if MC_RTC_VERSION_MAJOR < 2
-      auto & robot = robots.robot(rIdx[i]);
-#else
-      auto & robot = *robots.robots()[rIdx[i]];
-#endif
+      auto & robot = robots.robot(rNames[i]);
       robot.posW(basePoses[i]);
     }
     updateData();
@@ -232,17 +224,13 @@ public:
   void updateData()
   {
     size_t jQi = 0;
-    for(size_t i = 0; i < rIdx.size(); ++i)
+    for(size_t i = 0; i < rNames.size(); ++i)
     {
-#if MC_RTC_VERSION_MAJOR < 2
-      auto & robot = controller.controller().robots().robot(rIdx[i]);
-#else
-      auto & robot = *controller.controller().robots().robots()[rIdx[i]];
-#endif
-      controller.setSensorPosition(basePoses[i].translation());
-      controller.setSensorOrientation(Eigen::Quaterniond(basePoses[i].rotation()));
-      controller.setSensorLinearVelocity(baseVels[i].linear());
-      controller.setSensorAngularVelocity(baseVels[i].angular());
+      auto & robot = controller.controller().robots().robot(rNames[i]);
+      controller.setSensorPosition(robot.name(), basePoses[i].translation());
+      controller.setSensorOrientation(robot.name(), Eigen::Quaterniond(basePoses[i].rotation()));
+      controller.setSensorLinearVelocity(robot.name(), baseVels[i].linear());
+      controller.setSensorAngularVelocity(robot.name(), baseVels[i].angular());
       std::vector<double> encoders(robot.refJointOrder().size());
       std::vector<double> torques(robot.refJointOrder().size());
       for(size_t j = 0; j < robot.refJointOrder().size(); ++j)
@@ -251,8 +239,8 @@ public:
         torques[j] = jTorques[jQi + j];
       }
       jQi += robot.refJointOrder().size();
-      controller.setEncoderValues(encoders);
-      controller.setJointTorques(jTorques);
+      controller.setEncoderValues(robot.name(), encoders);
+      controller.setJointTorques(robot.name(), jTorques);
       controller.setWrenches(robot.name(), wrenches(robot, suffixes[i]));
     }
     controller.setSensorLinearAcceleration(accel.data);
@@ -309,13 +297,9 @@ public:
       updateData();
       if(controller.run())
       {
-        for(size_t i = 0; i < rIdx.size(); ++i)
+        for(size_t i = 0; i < rNames.size(); ++i)
         {
-#if MC_RTC_VERSION_MAJOR < 2
-          auto & robot = controller.controller().robots().robot(rIdx[i]);
-#else
-          auto & robot = *controller.controller().robots().robots()[rIdx[i]];
-#endif
+          auto & robot = controller.controller().robots().robot(rNames[i]);
           const auto & suffix = suffixes[i];
           if(torqueControl)
           {

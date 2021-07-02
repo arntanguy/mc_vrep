@@ -47,36 +47,8 @@ int main(int argc, char * argv[])
   mc_control::MCGlobalController controller(conf_file);
 
   /* Start the VREP remote API */
-  VREPSimulationConfiguration config;
+  VREPSimulationConfiguration config(controller);
   auto vrep_c = controller.configuration().config("VREP", mc_rtc::Configuration{});
-  vrep_c("Host", config.host);
-  vrep_c("Port", config.port);
-  vrep_c("Timeout", config.timeout);
-  vrep_c("WaitUntilConnected", config.waitUntilConnected);
-  vrep_c("DoNotReconnect", config.doNotReconnect);
-  vrep_c("CommThreadCycleInMs", config.commThreadCycleInMs);
-  vrep_c("SimulationTimestep", config.simulationTimestep);
-  if(config.simulationTimestep < 0)
-  {
-    config.simulationTimestep = controller.timestep();
-  }
-  vrep_c("StepByStep", config.stepByStep);
-  vrep_c("VelocityControl", config.velocityControl);
-  vrep_c("TorqueControl", config.torqueControl);
-  if(config.velocityControl && config.torqueControl)
-  {
-    mc_rtc::log::error_and_throw<std::runtime_error>("Only one of VelocityControl or TorqueControl must be true");
-  }
-  if(vrep_c.has("Extras"))
-  {
-    auto extras_c = vrep_c("Extras");
-    for(size_t i = 0; i < extras_c.size(); ++i)
-    {
-      unsigned int idx = extras_c[i]("index");
-      std::string suffix = extras_c[i]("suffix", std::string(""));
-      config.extras.push_back({idx, suffix});
-    }
-  }
   VREPSimulation vrep(controller, config);
 
   vrep.startSimulation();
