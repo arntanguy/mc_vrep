@@ -29,6 +29,9 @@ static LIBRARY simLib; // the CoppelisSim library that we will dynamically load 
 namespace mc_vrep
 {
 
+static std::unique_ptr<mc_control::MCGlobalController::GlobalConfiguration> gc_config_ptr;
+static std::unique_ptr<mc_control::ControllerServer> server_ptr;
+static std::unique_ptr<mc_rtc::gui::StateBuilder> default_gui_ptr;
 static std::unique_ptr<mc_control::MCGlobalController> gc_ptr;
 
 /** True when the simulation is started from mc_rtc GUI */
@@ -43,8 +46,6 @@ static size_t simulation_steps = 0;
 static bool simulation_stopped = false;
 /** True when the simulation is reset from mc_rtc GUI */
 static bool simulation_reset = false;
-/** True when we try to reset the GC from the GUI */
-static bool want_reset_gc = false;
 
 /** Log sink for most messages */
 static std::shared_ptr<LogSink> sink;
@@ -524,35 +525,50 @@ void SimulationData::run()
 
 static std::unique_ptr<SimulationData> simulation_data;
 
-static void reset_gc()
+static mc_rtc::gui::StateBuilder & get_gui()
 {
-  if(mc_rtc::MC_RTC_VERSION != mc_rtc::version())
+  if(gc_ptr)
   {
-    mc_rtc::log::error("mc_vrep was compiled with {} but mc_rtc is at version {}, you might "
-                       "face subtle issues or unexpected crashes, please recompile mc_vrep",
-                       mc_rtc::MC_RTC_VERSION, mc_rtc::version());
+#if MC_RTC_VERSION_MAJOR < 2
+    auto gui_ptr = gc_ptr->controller().gui();
+    if(!gui_ptr)
+    {
+      mc_rtc::log::error_and_throw<std::runtime_error>("GUI must be enabled for McRtc plugin to work");
+    }
+    return *gui_ptr;
+#else
+    return gc_ptr->controller().gui();
+#endif
   }
-  gc_ptr.reset(new mc_control::MCGlobalController());
+  if(!gc_config_ptr)
+  {
+    gc_config_ptr.reset(new mc_control::MCGlobalController::GlobalConfiguration(""));
+  }
+  if(!default_gui_ptr)
+  {
+    const auto & c = *gc_config_ptr;
+    server_ptr.reset(
+        new mc_control::ControllerServer(c.timestep, c.gui_timestep, c.gui_server_pub_uris, c.gui_server_rep_uris));
+    default_gui_ptr.reset(new mc_rtc::gui::StateBuilder());
+  }
+  return *default_gui_ptr;
+}
+
+static void reset_gui()
+{
+  auto & gui = get_gui();
   simulation_started = simulation_reset;
   simulation_paused = false;
   simulation_steps = 0;
   simulation_stopped = false;
   simulation_reset = false;
-  want_reset_gc = false;
-#if MC_RTC_VERSION_MAJOR < 2
-  auto gui_ptr = gc_ptr->controller().gui();
-  if(!gui_ptr)
-  {
-    return;
-  }
-  auto & gui = *gui_ptr;
-#else
-  auto & gui = gc_ptr->controller().gui();
-#endif
-  gui.addElement({"VREP"}, mc_rtc::gui::Button("Reload mc_rtc", []() { want_reset_gc = true; }));
   gui.addElement({"VREP"}, mc_rtc::gui::ElementsStacking::Horizontal,
                  mc_rtc::gui::Label("Simulation control", []() { return ""; }),
-                 mc_rtc::gui::Button("Start", []() { simulation_started = true; }),
+                 mc_rtc::gui::Button("Start",
+                                     []() {
+                                       simulation_started = true;
+                                       simulation_paused = false;
+                                     }),
                  mc_rtc::gui::Button("Pause", []() { simulation_paused = !simulation_paused; }),
                  mc_rtc::gui::Button("Stop", []() { simulation_stopped = true; }),
                  mc_rtc::gui::Button("Reset", []() { simulation_reset = true; }));
@@ -562,7 +578,7 @@ static void reset_gc()
                                  simulation_step_by_step = !simulation_step_by_step;
                                  simulation_steps = 0;
                                }));
-  double dt = gc_ptr->controller().solver().dt();
+  double dt = gc_config_ptr->timestep;
   auto label = [&](size_t i) { return fmt::format("+{}ms", i * std::ceil(dt * 1000)); };
   gui.addElement({"VREP"}, mc_rtc::gui::ElementsStacking::Horizontal,
                  mc_rtc::gui::Button(label(1), []() { simulation_steps = 1; }),
@@ -571,6 +587,24 @@ static void reset_gc()
                  mc_rtc::gui::Button(label(25), []() { simulation_steps = 25; }),
                  mc_rtc::gui::Button(label(50), []() { simulation_steps = 50; }),
                  mc_rtc::gui::Button(label(100), []() { simulation_steps = 100; }));
+}
+
+static void reset_gc()
+{
+  if(mc_rtc::MC_RTC_VERSION != mc_rtc::version())
+  {
+    mc_rtc::log::error("mc_vrep was compiled with {} but mc_rtc is at version {}, you might "
+                       "face subtle issues or unexpected crashes, please recompile mc_vrep",
+                       mc_rtc::MC_RTC_VERSION, mc_rtc::version());
+  }
+  if(server_ptr)
+  {
+    server_ptr.reset(nullptr);
+    default_gui_ptr.reset(nullptr);
+  }
+  gc_config_ptr.reset(new mc_control::MCGlobalController::GlobalConfiguration(""));
+  gc_ptr.reset(new mc_control::MCGlobalController(*gc_config_ptr));
+  reset_gui();
 }
 
 static mc_control::MCGlobalController & gc()
@@ -632,7 +666,7 @@ SIM_DLLEXPORT unsigned char simStart(void *, int)
   mc_rtc::log::details::info().sinks().push_back(mc_vrep::sink);
   mc_rtc::log::details::success().sinks().push_back(mc_vrep::success_sink);
   mc_rtc::log::details::cerr().sinks().push_back(mc_vrep::sink);
-  mc_vrep::reset_gc();
+  mc_vrep::reset_gui();
 
   return PLUGIN_VERSION;
 }
@@ -676,17 +710,6 @@ SIM_DLLEXPORT void * simMessage(int message, int * auxiliaryData, void * customD
     mc_vrep::sink->clear();
 
     auto simState = simGetSimulationState();
-    if(mc_vrep::want_reset_gc)
-    {
-      if(simState != sim_simulation_stopped)
-      {
-        mc_rtc::log::critical("mc_rtc cannot be reset while the simulation is running");
-      }
-      else
-      {
-        mc_vrep::reset_gc();
-      }
-    }
     if(simState == sim_simulation_stopped && mc_vrep::simulation_started)
     {
       simStartSimulation();
@@ -703,11 +726,16 @@ SIM_DLLEXPORT void * simMessage(int message, int * auxiliaryData, void * customD
     {
       simStopSimulation();
     }
-    if(!mc_vrep::simulation_started || mc_vrep::simulation_paused)
+    if(mc_vrep::simulation_paused)
     {
       mc_vrep::gc().running = false;
       mc_vrep::gc().run();
       mc_vrep::gc().running = true;
+    }
+    if(mc_vrep::server_ptr && mc_vrep::default_gui_ptr)
+    {
+      mc_vrep::server_ptr->publish(*mc_vrep::default_gui_ptr);
+      mc_vrep::server_ptr->handle_requests(*mc_vrep::default_gui_ptr);
     }
   }
 
@@ -749,7 +777,15 @@ SIM_DLLEXPORT void * simMessage(int message, int * auxiliaryData, void * customD
   if(message == sim_message_eventcallback_simulationended)
   { // Simulation just ended
     mc_vrep::simulation_data.reset();
-    mc_vrep::reset_gc();
+    if(mc_vrep::simulation_reset)
+    {
+      mc_vrep::reset_gc();
+    }
+    else
+    {
+      mc_vrep::gc_ptr.reset(nullptr);
+      mc_vrep::reset_gui();
+    }
   }
 
   if((message == sim_message_eventcallback_guipass) && refreshDlgFlag)
