@@ -73,22 +73,22 @@ public:
           vrep_bodies.push(b.name() + "_respondable");
         }
       }
-      gui->addElement(
-          {"VREP", "Force"},
-          mc_rtc::gui::Form("Apply force",
-                            [this, gui](const mc_rtc::Configuration & data) {
-                              std::string body = data("Body");
-                              Eigen::Vector6d force = data("Force");
-                              setExternalForce(body, {force});
-                              gui->addElement({"VREP", "Force"},
-                                              mc_rtc::gui::Button("Remove force on " + body, [this, body, gui]() {
-                                                std::string msg = "removeForce " + body;
-                                                removeExternalForce(body);
-                                                gui->removeElement({"VREP", "Force"}, "Remove force on " + body);
-                                              }));
-                            },
-                            mc_rtc::gui::FormDataComboInput("Body", true, {"VREP", "bodies"}),
-                            mc_rtc::gui::FormArrayInput<Eigen::Vector6d>("Force", true, Eigen::Vector6d::Zero())));
+      gui->addElement({"VREP", "Force"},
+                      mc_rtc::gui::Form(
+                          "Apply force",
+                          [this, gui](const mc_rtc::Configuration & data) {
+                            std::string body = data("Body");
+                            Eigen::Vector6d force = data("Force");
+                            setExternalForce(body, {force});
+                            gui->addElement({"VREP", "Force"},
+                                            mc_rtc::gui::Button("Remove force on " + body, [this, body, gui]() {
+                                              std::string msg = "removeForce " + body;
+                                              removeExternalForce(body);
+                                              gui->removeElement({"VREP", "Force"}, "Remove force on " + body);
+                                            }));
+                          },
+                          mc_rtc::gui::FormDataComboInput("Body", true, {"VREP", "bodies"}),
+                          mc_rtc::gui::FormArrayInput<Eigen::Vector6d>("Force", true, Eigen::Vector6d::Zero())));
       gui->addElement({"VREP", "Impact"},
                       mc_rtc::gui::Form(
                           "Apply impact",
@@ -99,14 +99,14 @@ public:
                           },
                           mc_rtc::gui::FormDataComboInput("Body", true, {"VREP", "bodies"}),
                           mc_rtc::gui::FormArrayInput<Eigen::Vector6d>("Force (N.s)", true, Eigen::Vector6d::Zero())));
-      gui->addElement({"VREP"},
-                      mc_rtc::gui::Checkbox("Step by step", [this]() { return cli_.stepByStep(); },
-                                            [this]() { cli_.toggleStepByStep(); }),
-                      mc_rtc::gui::Button("Next step", [this]() { cli_.nextStep(); }),
-                      mc_rtc::gui::Button("Stop", [this]() {
-                        stopSimulation();
-                        std::exit(0);
-                      }));
+      gui->addElement(
+          {"VREP"},
+          mc_rtc::gui::Checkbox(
+              "Step by step", [this]() { return cli_.stepByStep(); }, [this]() { cli_.toggleStepByStep(); }),
+          mc_rtc::gui::Button("Next step", [this]() { cli_.nextStep(); }), mc_rtc::gui::Button("Stop", [this]() {
+            stopSimulation();
+            std::exit(0);
+          }));
     }
 
     this->simulationTimestep = c.simulationTimestep;
