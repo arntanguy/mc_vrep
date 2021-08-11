@@ -114,8 +114,10 @@ private:
     VREPRobot(std::string name,
               int rootHandle,
               const std::vector<VREPJoint> & refJointToHandle,
-              const std::unordered_map<std::string, int> & fsHandles)
-    : name(name), rootHandle(rootHandle), refJointToHandle(refJointToHandle), fsHandles(fsHandles)
+              const std::unordered_map<std::string, int> & fsHandles,
+              const std::vector<std::string> & bodySensors)
+    : name(name), rootHandle(rootHandle), refJointToHandle(refJointToHandle), fsHandles(fsHandles),
+      bodySensors(bodySensors)
     {
       joints.resize(refJointToHandle.size());
       jointsVelocity.resize(refJointToHandle.size());
@@ -127,12 +129,18 @@ private:
           wrenches[fs.first] = sva::ForceVecd::Zero();
         }
       }
+      for(auto & bs : bodySensors)
+      {
+        angularVelocities[bs] = Eigen::Vector3d::Zero();
+        linearAccelerations[bs] = Eigen::Vector3d::Zero();
+      }
     }
 
     void updateSensors(mc_control::MCGlobalController & gc)
     {
       const auto & robot = gc.robot(name);
       const auto & rjo = robot.refJointOrder();
+      if(robot.hasBodySensor("FloatingBase"))
       {
         float pos[7];
         // pos is tx,ty,tz,qx,qy,qz,qw
@@ -143,18 +151,38 @@ private:
         orientation.y() = pos[4];
         orientation.z() = pos[5];
         orientation = orientation.inverse();
-        gc.setSensorPosition(name, position);
-        gc.setSensorOrientation(name, orientation);
+        gc.setSensorPositions(name, {{"FloatingBase", position}});
+        gc.setSensorOrientations(name, {{"FloatingBase", orientation}});
       }
       {
         float linV[3];
         float accV[3];
-        simGetObjectVelocity(rootHandle, linV, accV);
-        velocity.linear() << linV[0], linV[1], linV[2];
-        velocity.angular() << accV[0], accV[1], accV[2];
-        gc.setSensorLinearVelocity(name, velocity.linear());
-        gc.setSensorAngularVelocity(name, velocity.angular());
+        if(robot.hasBodySensor("FloatingBase"))
+        {
+          simGetObjectVelocity(rootHandle, linV, accV);
+          linearVelocity << linV[0], linV[1], linV[2];
+          angularVelocities["FloatingBase"] << accV[0], accV[1], accV[2];
+          gc.setSensorLinearVelocities(name, {{"FloatingBase", linearVelocity}});
+        }
+        for(const auto & bs : bodySensors)
+        {
+          float x, y, z = 0.0f;
+          simGetFloatSignal(fmt::format("{}_GyroSensor_x", bs).c_str(), &x);
+          simGetFloatSignal(fmt::format("{}_GyroSensor_y", bs).c_str(), &y);
+          simGetFloatSignal(fmt::format("{}_GyroSensor_z", bs).c_str(), &z);
+          angularVelocities[bs] << x, y, z;
+        }
+        gc.setSensorAngularVelocities(name, angularVelocities);
       }
+      for(const auto & bs : bodySensors)
+      {
+        float x, y, z = 0.0f;
+        simGetFloatSignal(fmt::format("{}_x", bs).c_str(), &x);
+        simGetFloatSignal(fmt::format("{}_y", bs).c_str(), &y);
+        simGetFloatSignal(fmt::format("{}_z", bs).c_str(), &z);
+        linearAccelerations[bs] << x, y, z;
+      }
+      gc.setSensorLinearAccelerations(name, linearAccelerations);
       for(size_t i = 0; i < rjo.size(); ++i)
       {
         const auto & j = rjo[i];
@@ -338,12 +366,18 @@ private:
     std::vector<double> jointsTorque;
     /** Force sensors reading */
     std::map<std::string, sva::ForceVecd> wrenches;
+    /** Available body sensors */
+    std::vector<std::string> bodySensors;
     /** Base position */
     Eigen::Vector3d position = Eigen::Vector3d::Zero();
     /** Base orientation */
     Eigen::Quaterniond orientation = Eigen::Quaterniond::Identity();
-    /** Base velocity */
-    sva::MotionVecd velocity = sva::MotionVecd::Zero();
+    /** Linear velocity reading for FloatingBase */
+    Eigen::Vector3d linearVelocity = Eigen::Vector3d::Zero();
+    /** Angular velocity readings */
+    std::map<std::string, Eigen::Vector3d> angularVelocities;
+    /** Linear acceleration readings */
+    std::map<std::string, Eigen::Vector3d> linearAccelerations;
   };
   /** VREP robots make the link between the VREP robot and an mc_rtc robot */
   std::vector<VREPRobot> robots_;
@@ -428,7 +462,40 @@ SimulationData::SimulationData(mc_control::MCGlobalController & controller) : gc
       }
       fsHandles[name] = h;
     }
-    robots_.emplace_back(robot.name(), rootHandle, refJointToHandle, fsHandles);
+    std::vector<std::string> bodySensors;
+    for(const auto & bs : robot.bodySensors())
+    {
+      const auto & name = bs.name();
+      if(name == "FloatingBase")
+      {
+        continue;
+      }
+      auto h = simGetObjectHandle((name + suffix).c_str());
+      if(h == -1)
+      {
+        mc_rtc::log::error("Body sensor {} in robot {} is not in the scene (looked for {})", name, robot.name(),
+                           name + suffix);
+        continue;
+      }
+      auto gyro = name + "_GyroSensor" + suffix;
+      auto h_gyro = simGetObjectHandle(gyro.c_str());
+      if(h_gyro == -1)
+      {
+        mc_rtc::log::error("Body sensor {} in robot {}, gyrometer is not in the scene (looked for {})", name,
+                           robot.name(), gyro);
+        continue;
+      }
+      if(utils::getHandleRoot(h) != rootHandle || utils::getHandleRoot(h_gyro) != rootHandle)
+      {
+        mc_rtc::log::error(
+            "Body sensor {} in robot {} (mc_rtc) seems to be attached to a different robot in the scene (matching "
+            "model in CoppeliaSim: {}, searched for force sensor: {} which has parent {})",
+            name, robot.name(), simGetObjectName(rootHandle), name + suffix, simGetObjectName(utils::getHandleRoot(h)));
+        continue;
+      }
+      bodySensors.push_back(name);
+    }
+    robots_.emplace_back(robot.name(), rootHandle, refJointToHandle, fsHandles, bodySensors);
   };
   makeVREPRobot(gc_.controller().robot().name(), "");
   if(robots_.empty())
