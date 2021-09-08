@@ -624,7 +624,6 @@ static mc_rtc::gui::StateBuilder & get_gui()
 static void reset_gui()
 {
   auto & gui = get_gui();
-  simulation_started = simulation_reset;
   simulation_paused = false;
   simulation_steps = 0;
   simulation_stopped = false;
@@ -636,9 +635,26 @@ static void reset_gui()
                                        simulation_started = true;
                                        simulation_paused = false;
                                      }),
-                 mc_rtc::gui::Button("Pause", []() { simulation_paused = !simulation_paused; }),
-                 mc_rtc::gui::Button("Stop", []() { simulation_stopped = true; }),
-                 mc_rtc::gui::Button("Reset", []() { simulation_reset = true; }));
+                 mc_rtc::gui::Button("Pause",
+                                     []() {
+                                       if(simulation_started)
+                                       {
+                                         simulation_paused = !simulation_paused;
+                                       }
+                                     }),
+                 mc_rtc::gui::Button("Stop",
+                                     []() {
+                                       if(simulation_started)
+                                       {
+                                         simulation_stopped = true;
+                                       }
+                                     }),
+                 mc_rtc::gui::Button("Reset", []() {
+                   if(simulation_started)
+                   {
+                     simulation_reset = true;
+                   }
+                 }));
   gui.addElement({"VREP"}, mc_rtc::gui::Checkbox(
                                "Step by step", []() { return simulation_step_by_step; },
                                []() {
@@ -810,7 +826,7 @@ SIM_DLLEXPORT void * simMessage(int message, int * auxiliaryData, void * customD
   {
     // This is called before CoppeliaSim runs the simulation main loop, by writing something other than -1 in replyData
     // we can prevent the main script execution
-    if(mc_vrep::simulation_step_by_step)
+    if(mc_vrep::simulation_started && mc_vrep::simulation_step_by_step)
     {
       if(mc_vrep::simulation_steps == 0)
       {
@@ -828,7 +844,10 @@ SIM_DLLEXPORT void * simMessage(int message, int * auxiliaryData, void * customD
 
   if(message == sim_message_eventcallback_simulationabouttostart)
   { // Simulation is about to start
-    mc_vrep::simulation_data.reset(new mc_vrep::SimulationData(mc_vrep::gc()));
+    if(mc_vrep::simulation_started)
+    {
+      mc_vrep::simulation_data.reset(new mc_vrep::SimulationData(mc_vrep::gc()));
+    }
   }
 
   if(message == sim_message_eventcallback_modulehandle)
@@ -837,21 +856,28 @@ SIM_DLLEXPORT void * simMessage(int message, int * auxiliaryData, void * customD
        || (_stricmp("McRtc", (char *)customData) == 0)) // is the command also meant for this plugin?
     {
       // we arrive here only while a simulation is running
-      mc_vrep::simulation_data->run();
+      if(mc_vrep::simulation_started)
+      {
+        mc_vrep::simulation_data->run();
+      }
     }
   }
 
   if(message == sim_message_eventcallback_simulationended)
   { // Simulation just ended
-    mc_vrep::simulation_data.reset();
-    if(mc_vrep::simulation_reset)
+    if(mc_vrep::simulation_started)
     {
-      mc_vrep::reset_gc();
-    }
-    else
-    {
-      mc_vrep::gc_ptr.reset(nullptr);
-      mc_vrep::reset_gui();
+      mc_vrep::simulation_data.reset();
+      if(mc_vrep::simulation_reset)
+      {
+        mc_vrep::reset_gc();
+      }
+      else
+      {
+        mc_vrep::simulation_started = false;
+        mc_vrep::gc_ptr.reset(nullptr);
+        mc_vrep::reset_gui();
+      }
     }
   }
 
