@@ -81,6 +81,23 @@ int getModelBaseHandle(const std::string & name)
   return h;
 }
 
+sva::PTransformd getObjectPose(int handle)
+{
+  sva::PTransformd out;
+  float pos[7];
+  // pos is tx,ty,tz,qx,qy,qz,qw
+  simGetObjectPose(handle, -1, pos);
+  out.translation() << pos[0], pos[1], pos[2];
+  Eigen::Quaterniond orientation;
+  orientation.w() = pos[6];
+  orientation.x() = pos[3];
+  orientation.y() = pos[4];
+  orientation.z() = pos[5];
+  orientation = orientation.inverse();
+  out.rotation() = orientation.toRotationMatrix();
+  return out;
+}
+
 } // namespace utils
 
 /** Data for the simulation */
@@ -113,10 +130,11 @@ private:
 
     VREPRobot(std::string name,
               int rootHandle,
+              const sva::PTransformd & X_0_vrep,
               const std::vector<VREPJoint> & refJointToHandle,
               const std::unordered_map<std::string, int> & fsHandles,
               const std::vector<std::string> & bodySensors)
-    : name(name), rootHandle(rootHandle), refJointToHandle(refJointToHandle), fsHandles(fsHandles),
+    : name(name), rootHandle(rootHandle), X_0_vrep(X_0_vrep), refJointToHandle(refJointToHandle), fsHandles(fsHandles),
       bodySensors(bodySensors)
     {
       joints.resize(refJointToHandle.size());
@@ -142,15 +160,9 @@ private:
       const auto & rjo = robot.refJointOrder();
       if(robot.hasBodySensor("FloatingBase"))
       {
-        float pos[7];
-        // pos is tx,ty,tz,qx,qy,qz,qw
-        simGetObjectPose(rootHandle, -1, pos);
-        position << pos[0], pos[1], pos[2];
-        orientation.w() = pos[6];
-        orientation.x() = pos[3];
-        orientation.y() = pos[4];
-        orientation.z() = pos[5];
-        orientation = orientation.inverse();
+        sva::PTransformd X_0_r = utils::getObjectPose(rootHandle) * X_0_vrep;
+        position = X_0_r.translation();
+        orientation = X_0_r.rotation();
         gc.setSensorPositions(name, {{"FloatingBase", position}});
         gc.setSensorOrientations(name, {{"FloatingBase", orientation}});
       }
@@ -354,6 +366,8 @@ private:
     std::string name;
     /** Handle for the model base */
     int rootHandle;
+    /** Transformation offset between V-REP and mc_rtc */
+    sva::PTransformd X_0_vrep;
     /** Handle for the joints */
     std::vector<VREPJoint> refJointToHandle;
     /** Handle for the force sensors */
@@ -389,7 +403,7 @@ private:
 SimulationData::SimulationData(mc_control::MCGlobalController & controller) : gc_(controller), config_(gc_)
 {
   auto makeVREPRobot = [this](const std::string & name, const std::string & suffix) {
-    const auto & robot = gc_.robots().robot(name);
+    auto & robot = gc_.robots().robot(name);
     // First try to find the model base by using the robot's name
     auto rootHandle = utils::getModelBaseHandle(name);
     if(rootHandle == -1)
@@ -439,8 +453,50 @@ SimulationData::SimulationData(mc_control::MCGlobalController & controller) : gc
         {
           reversed = (joint.motionSubspace().array() < -1e-6).any();
         }
+#if MC_RTC_VERSION_MAJOR < 2
+        auto qIdx = robot.jointIndexInMBC(i);
+#else
+        auto qIdx = robot.refJointIndexToQIndex(i);
+#endif
+        if(h == -1 || qIdx == -1)
+        {
+          continue;
+        }
+        float encoder;
+        simGetJointPosition(h, &encoder);
+#if MC_RTC_VERSION_MAJOR < 2
+        robot.mbc().q[qIdx][0] = encoder;
+#else
+        robot.q()->set(qIdx, encoder);
+#endif
       }
       refJointToHandle[i] = {h, reversed};
+    }
+    sva::PTransformd X_0_vrep = sva::PTransformd::Identity();
+    {
+      /** Get a first value of the position */
+      sva::PTransformd X_vrep_r = utils::getObjectPose(rootHandle);
+      robot.posW(X_vrep_r);
+      /** Now we find the first joint position, it must match between V-REP and mc_rtc even if the bodies origin have
+       * moved */
+      for(size_t i = 0; i < refJointToHandle.size(); ++i)
+      {
+        if(refJointToHandle[i].handle == -1)
+        {
+          continue;
+        }
+        const auto & jn = robot.refJointOrder()[i];
+        if(!robot.hasJoint(jn))
+        {
+          continue;
+        }
+        auto jIndex = robot.jointIndexByName(jn);
+        sva::PTransformd X_vrep_j = utils::getObjectPose(refJointToHandle[i].handle);
+        auto parentIndex = robot.mb().predecessor(jIndex);
+        sva::PTransformd X_0_j = robot.mb().transform(jIndex) * robot.mbc().bodyPosW[parentIndex];
+        X_0_vrep = X_0_j.inv() * X_vrep_j;
+        break;
+      }
     }
     std::unordered_map<std::string, int> fsHandles;
     for(const auto & fs : robot.forceSensors())
@@ -495,7 +551,7 @@ SimulationData::SimulationData(mc_control::MCGlobalController & controller) : gc
       }
       bodySensors.push_back(name);
     }
-    robots_.emplace_back(robot.name(), rootHandle, refJointToHandle, fsHandles, bodySensors);
+    robots_.emplace_back(robot.name(), rootHandle, X_0_vrep, refJointToHandle, fsHandles, bodySensors);
   };
   makeVREPRobot(gc_.controller().robot().name(), "");
   if(robots_.empty())
