@@ -6,6 +6,9 @@ static LIBRARY simLib; // the CoppelisSim library that we will dynamically load 
 #include <mc_rtc/logging.h>
 #include <mc_rtc/version.h>
 
+#include <boost/filesystem.hpp>
+namespace bfs = boost::filesystem;
+
 // For the configuration
 #include "vrep_simulation_configuration.h"
 
@@ -404,6 +407,19 @@ SimulationData::SimulationData(mc_control::MCGlobalController & controller) : gc
 {
   auto makeVREPRobot = [this](const std::string & name, const std::string & suffix) {
     auto & robot = gc_.robots().robot(name);
+#ifndef WIN32
+    bfs::path tweaksFile =
+        bfs::path(std::getenv("HOME")) / fmt::format(".config/mc_rtc/mc_vrep/{}.yaml", robot.module().name);
+#else
+    bfs::path tweaksFile =
+        bfs::path(std::getenv("APPDATA")) / fmt::format("mc_rtc/mc_vrep/{}.yaml", robot.module().name);
+#endif
+    mc_rtc::Configuration tweaks;
+    if(bfs::exists(tweaksFile))
+    {
+      mc_rtc::log::info("Using tweaks file for {} at {}", name, tweaksFile.string());
+      tweaks.load(tweaksFile.string());
+    }
     // First try to find the model base by using the robot's name
     auto rootHandle = utils::getModelBaseHandle(name);
     if(rootHandle == -1)
@@ -427,6 +443,8 @@ SimulationData::SimulationData(mc_control::MCGlobalController & controller) : gc
       return;
     }
     std::vector<VREPRobot::VREPJoint> refJointToHandle(robot.refJointOrder().size());
+    auto force_reversed = tweaks("force_reversed", std::vector<std::string>{});
+    auto force_non_reversed = tweaks("force_non_reversed", std::vector<std::string>{});
     for(size_t i = 0; i < robot.refJointOrder().size(); ++i)
     {
       const auto & j = robot.refJointOrder()[i];
@@ -452,6 +470,14 @@ SimulationData::SimulationData(mc_control::MCGlobalController & controller) : gc
         if(joint.type() == rbd::Joint::Type::Rev || joint.type() == rbd::Joint::Type::Prism)
         {
           reversed = (joint.motionSubspace().array() < -1e-6).any();
+        }
+        if(std::find(force_reversed.begin(), force_reversed.end(), joint.name()) != force_reversed.end())
+        {
+          reversed = true;
+        }
+        if(std::find(force_non_reversed.begin(), force_non_reversed.end(), joint.name()) != force_non_reversed.end())
+        {
+          reversed = false;
         }
 #if MC_RTC_VERSION_MAJOR < 2
         auto qIdx = robot.jointIndexInMBC(i);
@@ -495,6 +521,7 @@ SimulationData::SimulationData(mc_control::MCGlobalController & controller) : gc
         auto parentIndex = robot.mb().predecessor(jIndex);
         sva::PTransformd X_0_j = robot.mb().transform(jIndex) * robot.mbc().bodyPosW[parentIndex];
         X_0_vrep = X_0_j.inv() * X_vrep_j;
+        robot.posW(X_vrep_r * X_0_vrep);
         break;
       }
     }
