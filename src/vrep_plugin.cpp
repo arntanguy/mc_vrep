@@ -439,7 +439,8 @@ SimulationData::SimulationData(mc_control::MCGlobalController & controller) : gc
       mc_rtc::log::error(
           "mc_rtc is trying to control {} in CoppeliaSim but it cannot find it in the scene, either:\n1. The object "
           "does not have a model base in CoppeliaSim\n2. The object's name in mc_rtc does not match its name in "
-          "CoppeliaSim\n3. The joints' names do not match between mc_rtc and CoppeliaSim");
+          "CoppeliaSim\n3. The joints' names do not match between mc_rtc and CoppeliaSim",
+          name);
       return;
     }
     std::vector<VREPRobot::VREPJoint> refJointToHandle(robot.refJointOrder().size());
