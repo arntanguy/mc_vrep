@@ -844,6 +844,10 @@ static void setup_datastore()
         return false;
       }
     });
+    ds.make_call("CoppeliaSim::GetObjectPose", [](const std::string & object) -> sva::PTransformd {
+      auto obj_id = simGetObjectHandle(object.c_str());
+      return utils::getObjectPose(obj_id);
+    });
   };
   add_datastore_entries(ctl);
 }
