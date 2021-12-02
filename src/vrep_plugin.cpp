@@ -712,7 +712,7 @@ static void reset_gui()
   simulation_steps = 0;
   simulation_stopped = false;
   simulation_reset = false;
-  gui.addElement({"VREP"}, mc_rtc::gui::ElementsStacking::Horizontal,
+  gui.addElement({"CoppeliaSim"}, mc_rtc::gui::ElementsStacking::Horizontal,
                  mc_rtc::gui::Label("Simulation control", []() { return ""; }),
                  mc_rtc::gui::Button("Start",
                                      []() {
@@ -739,15 +739,15 @@ static void reset_gui()
                      simulation_reset = true;
                    }
                  }));
-  gui.addElement({"VREP"}, mc_rtc::gui::Checkbox(
-                               "Step by step", []() { return simulation_step_by_step; },
-                               []() {
-                                 simulation_step_by_step = !simulation_step_by_step;
-                                 simulation_steps = 0;
-                               }));
+  gui.addElement({"CoppeliaSim"}, mc_rtc::gui::Checkbox(
+                                      "Step by step", []() { return simulation_step_by_step; },
+                                      []() {
+                                        simulation_step_by_step = !simulation_step_by_step;
+                                        simulation_steps = 0;
+                                      }));
   double dt = gc_config_ptr->timestep;
   auto label = [&](size_t i) { return fmt::format("+{}ms", i * std::ceil(dt * 1000)); };
-  gui.addElement({"VREP"}, mc_rtc::gui::ElementsStacking::Horizontal,
+  gui.addElement({"CoppeliaSim"}, mc_rtc::gui::ElementsStacking::Horizontal,
                  mc_rtc::gui::Button(label(1), []() { simulation_steps = 1; }),
                  mc_rtc::gui::Button(label(5), []() { simulation_steps = 5; }),
                  mc_rtc::gui::Button(label(10), []() { simulation_steps = 10; }),
@@ -755,6 +755,8 @@ static void reset_gui()
                  mc_rtc::gui::Button(label(50), []() { simulation_steps = 50; }),
                  mc_rtc::gui::Button(label(100), []() { simulation_steps = 100; }));
 }
+
+static void setup_datastore();
 
 static void reset_gc()
 {
@@ -772,6 +774,7 @@ static void reset_gc()
   gc_config_ptr.reset(new mc_control::MCGlobalController::GlobalConfiguration(""));
   gc_ptr.reset(new mc_control::MCGlobalController(*gc_config_ptr));
   reset_gui();
+  setup_datastore();
 }
 
 static mc_control::MCGlobalController & gc()
@@ -781,6 +784,68 @@ static mc_control::MCGlobalController & gc()
     reset_gc();
   }
   return *gc_ptr;
+}
+
+static void setup_datastore()
+{
+  auto & ctl = gc_ptr->controller();
+  auto add_datastore_entries = [](mc_control::MCController & ctl) {
+    auto & ds = ctl.datastore();
+    /**
+     * @brief Controllers can check whether they are running in CoppeliaSim if this flag is present.
+     */
+    ds.make<bool>("CoppeliaSim", true);
+    /**
+     * @brief SetObjectParent: Changes the parent of an object
+     *
+     * @param object Object name in CoppeliaSim
+     * @param parent Name of the new Parent object
+     * @param keepInPlace When true, the object pose follows the parent object
+     */
+    ds.make_call("CoppeliaSim::SetObjectParent",
+                 [](const std::string & object, const std::string & parent, bool keepInPlace) -> bool {
+                   auto obj_id = simGetObjectHandle(object.c_str());
+                   auto parent_id = simGetObjectHandle(parent.c_str());
+                   if(simSetObjectParent(obj_id, parent_id, keepInPlace) != -1)
+                   {
+                     mc_rtc::log::info("Object \"{}\" parent is now \"{}\"", object, parent);
+                     return true;
+                   }
+                   else
+                   {
+                     mc_rtc::log::error("Failed to set parent \"{}\" for object \"{}\"", parent, object);
+                     return false;
+                   }
+                 });
+    /**
+     * @brief Changes the dynamic state of an object
+     *
+     * @param object Object name in CoppeliaSim
+     * @param dynamic When true the object becomes dynamic; false means static
+     */
+    ds.make_call("CoppeliaSim::SetModelPropertyDynamic", [](const std::string & object, bool dynamic) -> bool {
+      auto obj_id = simGetObjectHandle(object.c_str());
+      if(simSetObjectInt32Parameter(obj_id, sim_shapeintparam_static, !dynamic) != -1
+         && simResetDynamicObject(obj_id) != -1)
+      {
+        if(dynamic)
+        {
+          mc_rtc::log::info("Object \"{}\" is now dynamic", object);
+        }
+        else
+        {
+          mc_rtc::log::info("Object \"{}\" is now static", object);
+        }
+        return true;
+      }
+      else
+      {
+        mc_rtc::log::error("Failed to change dynamic property for object \"{}\"", object);
+        return false;
+      }
+    });
+  };
+  add_datastore_entries(ctl);
 }
 
 } // namespace mc_vrep
