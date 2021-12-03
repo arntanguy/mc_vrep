@@ -89,7 +89,10 @@ sva::PTransformd getObjectPose(int handle)
   sva::PTransformd out;
   float pos[7];
   // pos is tx,ty,tz,qx,qy,qz,qw
-  simGetObjectPose(handle, -1, pos);
+  if(simGetObjectPose(handle, -1, pos) == -1)
+  {
+    mc_rtc::log::error_and_throw<std::runtime_error>("Failed to get pose for object \"{}\"", handle);
+  }
   out.translation() << pos[0], pos[1], pos[2];
   Eigen::Quaterniond orientation;
   orientation.w() = pos[6];
@@ -794,37 +797,74 @@ static void setup_datastore()
     /**
      * @brief Controllers can check whether they are running in CoppeliaSim if this flag is present.
      */
-    ds.make<bool>("CoppeliaSim", true);
+    ds.make<bool>("InterfaceIsCoppeliaSim", true);
     /**
-     * @brief SetObjectParent: Changes the parent of an object
+     * @brief Changes the parent of an object
      *
      * @param object Object name in CoppeliaSim
      * @param parent Name of the new Parent object
      * @param keepInPlace When true, the object pose follows the parent object
      */
-    ds.make_call("CoppeliaSim::SetObjectParent",
-                 [](const std::string & object, const std::string & parent, bool keepInPlace) -> bool {
-                   auto obj_id = simGetObjectHandle(object.c_str());
-                   auto parent_id = simGetObjectHandle(parent.c_str());
-                   if(simSetObjectParent(obj_id, parent_id, keepInPlace) != -1)
-                   {
-                     mc_rtc::log::info("Object \"{}\" parent is now \"{}\"", object, parent);
-                     return true;
-                   }
-                   else
-                   {
-                     mc_rtc::log::error("Failed to set parent \"{}\" for object \"{}\"", parent, object);
-                     return false;
-                   }
-                 });
+    ds.make_call("CoppeliaSim::AttachObject", [](const std::string & object, const std::string & parent) -> bool {
+      auto obj_id = simGetObjectHandle(object.c_str());
+      if(obj_id == -1)
+      {
+        mc_rtc::log::error("Object \"{}\" not found", obj_id);
+        return false;
+      }
+      auto parent_id = simGetObjectHandle(parent.c_str());
+      if(parent_id == -1)
+      {
+        mc_rtc::log::error("Object \"{}\" not found", parent_id);
+        return false;
+      }
+      if(simSetObjectParent(obj_id, parent_id, true) != -1)
+      {
+        mc_rtc::log::info("Object \"{}\" parent is now \"{}\"", object, parent);
+        return true;
+      }
+      else
+      {
+        mc_rtc::log::error("Failed to set parent \"{}\" for object \"{}\"", parent, object);
+        return false;
+      }
+    });
+    /**
+     * @brief Detach an object
+     *
+     * @param object Object name in CoppeliaSim
+     */
+    ds.make_call("CoppeliaSim::DetachObject", [](const std::string & object) -> bool {
+      auto obj_id = simGetObjectHandle(object.c_str());
+      if(obj_id == -1)
+      {
+        mc_rtc::log::error("Object \"{}\" not found", obj_id);
+        return false;
+      }
+      if(simSetObjectParent(obj_id, -1, true) != -1)
+      {
+        mc_rtc::log::info("Object \"{}\" detached", object);
+        return true;
+      }
+      else
+      {
+        mc_rtc::log::error("Failed to detach object \"{}\"", object);
+        return false;
+      }
+    });
     /**
      * @brief Changes the dynamic state of an object
      *
      * @param object Object name in CoppeliaSim
      * @param dynamic When true the object becomes dynamic; false means static
      */
-    ds.make_call("CoppeliaSim::SetModelPropertyDynamic", [](const std::string & object, bool dynamic) -> bool {
+    ds.make_call("CoppeliaSim::SetObjectDynamicProperty", [](const std::string & object, bool dynamic) -> bool {
       auto obj_id = simGetObjectHandle(object.c_str());
+      if(obj_id == -1)
+      {
+        mc_rtc::log::error("Object \"{}\" not found", obj_id);
+        return false;
+      }
       if(simSetObjectInt32Parameter(obj_id, sim_shapeintparam_static, !dynamic) != -1
          && simResetDynamicObject(obj_id) != -1)
       {
@@ -846,6 +886,10 @@ static void setup_datastore()
     });
     ds.make_call("CoppeliaSim::GetObjectPose", [](const std::string & object) -> sva::PTransformd {
       auto obj_id = simGetObjectHandle(object.c_str());
+      if(obj_id == -1)
+      {
+        mc_rtc::log::error_and_throw<std::runtime_error>("Object \"{}\" not found", obj_id);
+      }
       return utils::getObjectPose(obj_id);
     });
   };
