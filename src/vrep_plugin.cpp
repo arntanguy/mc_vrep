@@ -884,6 +884,37 @@ static void setup_datastore()
         return false;
       }
     });
+    /**
+     * @brief Changes the respondable state of an object
+     *
+     * @param object Object name in CoppeliaSim
+     * @param respondable When true the object becomes respondable; false means non-respondable
+     */
+    ds.make_call("CoppeliaSim::SetObjectRespondableProperty", [](const std::string & object, bool respondable) -> bool {
+      auto obj_id = simGetObjectHandle(object.c_str());
+      if(obj_id == -1)
+      {
+        mc_rtc::log::error("Object \"{}\" not found", obj_id);
+        return false;
+      }
+      if(simSetObjectInt32Parameter(obj_id, sim_shapeintparam_respondable, respondable) != -1)
+      {
+        if(respondable)
+        {
+          mc_rtc::log::info("Object \"{}\" is now respondable", object);
+        }
+        else
+        {
+          mc_rtc::log::info("Object \"{}\" is now non-respondable", object);
+        }
+        return true;
+      }
+      else
+      {
+        mc_rtc::log::error("Failed to change respondable property for object \"{}\"", object);
+        return false;
+      }
+    });
     ds.make_call("CoppeliaSim::GetObjectPose", [](const std::string & object) -> sva::PTransformd {
       auto obj_id = simGetObjectHandle(object.c_str());
       if(obj_id == -1)
